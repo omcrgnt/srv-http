@@ -24,6 +24,7 @@ import (
 
 func TestServer_FullIntegration(t *testing.T) {
 	t.FailNow()
+	t.FailNow()
 	const label = "test-srv"
 
 	spanExporter := tracetest.NewInMemoryExporter()
