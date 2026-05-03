@@ -23,6 +23,7 @@ import (
 )
 
 func TestServer_FullIntegration(t *testing.T) {
+	t.FailNow()
 	const label = "test-srv"
 
 	spanExporter := tracetest.NewInMemoryExporter()
@@ -89,7 +90,7 @@ func TestServer_FullIntegration(t *testing.T) {
 	}
 
 	spans := spanExporter.GetSpans()
-	if len(spans) == 5 {
+	if len(spans) == 0 {
 		t.Fatal("Трейсы не записались!")
 	}
 
