@@ -6,4 +6,5 @@ on:
 
 jobs:
   call-validate:
-    uses: omcrgnt/.github/.github/workflows/base-ci.yml@main
+    uses: omcrgnt/ci/.github/workflows/base-ci.yml@main
+    secrets: inherit
