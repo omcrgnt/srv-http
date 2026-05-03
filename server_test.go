@@ -1,6 +1,7 @@
 package srvhttp
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net"
@@ -47,9 +48,9 @@ func TestServer_FullIntegration(t *testing.T) {
 		Server:   http.Server{Handler: r},
 		listener: listener,
 	}
-	server.recorder = recorder // Имитация Inject
+	server.recorder = recorder
 
-	server.initFn = func(t *srv[*chi.Mux]) {
+	server.initFn = func(_ context.Context, t *srv[*chi.Mux]) {
 		mdlw := middleware.New(middleware.Config{
 			Recorder: server.recorder,
 			Service:  label,

@@ -28,7 +28,7 @@ func (cfg *Config[T]) Build() (any, error) {
 		return nil, err
 	}
 	return &srv[T]{
-		initFn: func(t *srv[T]) {
+		initFn: func(ctx context.Context, t *srv[T]) {
 			mdlw := middleware.New(middleware.Config{
 				Recorder: t.recorder,
 				Service:  cfg.Label.String(),
@@ -38,8 +38,8 @@ func (cfg *Config[T]) Build() (any, error) {
 			t.Handler = otelhttp.NewHandler(t.Handler, cfg.Label.String())
 
 			t.BaseContext = func(net.Listener) context.Context {
-				logger := slog.Default().With("srv", cfg.Label.String())
-				return context.WithValue(context.Background(), "srvhttp", logger)
+				logger := slog.Default().With("srv", cfg.Label.String()) // TODO mcrgnt: make properly logger
+				return context.WithValue(ctx, "srvhttp", logger)         // TODO mcrgnt: make properly logger
 			}
 		},
 		Server:   http.Server{},
@@ -48,7 +48,7 @@ func (cfg *Config[T]) Build() (any, error) {
 }
 
 type srv[T http.Handler] struct {
-	initFn func(t *srv[T])
+	initFn func(context.Context, *srv[T])
 	http.Server
 	listener net.Listener
 	err      atomic.Error
@@ -80,7 +80,7 @@ func (t *srv[T]) Start(ctx context.Context) error {
 	case <-ctx.Done():
 		return ctx.Err()
 	default:
-		t.initFn(t)
+		t.initFn(ctx, t)
 
 		go func() {
 			if err := t.Serve(t.listener); err != nil {
