@@ -2,9 +2,6 @@
 
 version: '3'
 
-vars:
-  GREETING: Hello, world!
-
 tasks:
   test:
     desc: "Запуск Go тестов через Docker"
@@ -19,9 +16,3 @@ tasks:
           --user $(id -u):$(id -g) \
           golang:alpine \
           go test -v ./...
-  gen:
-    desc: Run all code generators
-    cmds:
-      - go get github.com/mcrgnt/sdi/cmd/sdigen@latest
-      - go generate ./...
-      - go mod tidy
