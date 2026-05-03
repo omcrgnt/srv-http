@@ -89,7 +89,7 @@ func TestServer_FullIntegration(t *testing.T) {
 	}
 
 	spans := spanExporter.GetSpans()
-	if len(spans) == 2 {
+	if len(spans) == 3 {
 		t.Fatal("Трейсы не записались!")
 	}
 
