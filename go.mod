@@ -1,4 +1,4 @@
-module github.com/mcrgnt/srv-http
+module github.com/omcrgnt/srv-http
 
 go 1.26.2
 
