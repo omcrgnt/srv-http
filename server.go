@@ -8,7 +8,7 @@ import (
 	"net"
 	"net/http"
 
-	commonv1 "github.com/mcrgnt/proto/gen/go/common/v1"
+	commonv1 "github.com/omcrgnt/proto/gen/go/common/v1"
 	"github.com/slok/go-http-metrics/metrics"
 	"github.com/slok/go-http-metrics/middleware"
 	"github.com/slok/go-http-metrics/middleware/std"

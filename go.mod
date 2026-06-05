@@ -4,7 +4,7 @@ go 1.26.2
 
 require (
 	github.com/go-chi/chi/v5 v5.2.5
-	github.com/mcrgnt/proto/gen/go v0.1.2
+	github.com/omcrgnt/proto/gen/go v0.3.0
 	github.com/prometheus/client_golang v1.23.2
 	github.com/slok/go-http-metrics v0.13.0
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.68.0
