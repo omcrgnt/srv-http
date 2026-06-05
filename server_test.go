@@ -93,7 +93,9 @@ func TestServer_FullIntegration(t *testing.T) {
 		t.Fatal("Трейсы не записались!")
 	}
 
-	if !strings.Contains(spans[0].Name, label) {
-		t.Errorf("Unexpected span name: %s", spans[0].Name)
+	for i, span := range spans {
+		if span.Name != "GET" {
+			t.Errorf("span[%d]: unexpected name %q, want GET", i, span.Name)
+		}
 	}
 }
