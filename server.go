@@ -8,7 +8,7 @@ import (
 	"net"
 	"net/http"
 
-	commonv1 "github.com/omcrgnt/proto/gen/go/common/v1"
+	common "github.com/omcrgnt/proto/gen/go/common/v1"
 	"github.com/slok/go-http-metrics/metrics"
 	"github.com/slok/go-http-metrics/middleware"
 	"github.com/slok/go-http-metrics/middleware/std"
@@ -17,9 +17,9 @@ import (
 )
 
 type Config[T http.Handler] struct {
-	Label commonv1.Label
-	Host  commonv1.Host
-	Port  commonv1.Port
+	Label common.Label
+	Host  common.Host
+	Port  common.Port
 }
 
 func (cfg *Config[T]) Build() (any, error) {
