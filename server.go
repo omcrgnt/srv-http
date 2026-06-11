@@ -53,13 +53,14 @@ type srv[T http.Handler] struct {
 	listener net.Listener
 	err      atomic.Error
 
-	handler  T                `deps:""`
-	recorder metrics.Recorder `deps:""`
+	handler  T
+	recorder metrics.Recorder
 }
 
 func (r *srv[T]) Deps() []any {
+	var t T
 	return []any{
-		(*T)(nil),
+		t,
 		(*metrics.Recorder)(nil),
 	}
 }
