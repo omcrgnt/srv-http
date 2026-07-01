@@ -35,10 +35,10 @@ func (cfg *Config[T]) Build() (any, error) {
 			})
 			t.Handler = std.Handler("", mdlw, t.Handler)
 
-			t.Handler = otelhttp.NewHandler(t.Handler, cfg.Label.String())
+			t.Handler = otelhttp.NewHandler(t.Handler, cfg.Label.GetValue())
 
 			t.BaseContext = func(net.Listener) context.Context {
-				logger := slog.Default().With("srv", cfg.Label.String()) // TODO mcrgnt: make properly logger
+				logger := slog.Default().With("srv", cfg.Label.GetValue()) // TODO mcrgnt: make properly logger
 				return context.WithValue(ctx, "srvhttp", logger)         // TODO mcrgnt: make properly logger
 			}
 		},
