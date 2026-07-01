@@ -31,7 +31,7 @@ func (cfg *Config[T]) Build() (any, error) {
 		initFn: func(ctx context.Context, t *srv[T]) {
 			mdlw := middleware.New(middleware.Config{
 				Recorder: t.recorder,
-				Service:  cfg.Label.String(),
+				Service:  cfg.Label.GetValue(),
 			})
 			t.Handler = std.Handler("", mdlw, t.Handler)
 
