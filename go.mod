@@ -9,8 +9,8 @@ retract (
 
 require (
 	github.com/go-chi/chi/v5 v5.3.0
-	github.com/omcrgnt/builder v0.20.2
 	github.com/omcrgnt/proto/gen/go v0.3.0
+	github.com/omcrgnt/res v0.22.0
 	github.com/prometheus/client_golang v1.23.2
 	github.com/slok/go-http-metrics v0.13.0
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.69.0
@@ -28,7 +28,6 @@ require (
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
-	github.com/omcrgnt/res v0.20.2 // indirect
 	github.com/prometheus/client_model v0.6.2 // indirect
 	github.com/prometheus/common v0.69.0 // indirect
 	github.com/prometheus/procfs v0.20.1 // indirect

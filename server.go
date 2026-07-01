@@ -8,7 +8,6 @@ import (
 	"net"
 	"net/http"
 
-	"github.com/omcrgnt/builder"
 	common "github.com/omcrgnt/proto/gen/go/common/v1"
 	"github.com/slok/go-http-metrics/metrics"
 	"github.com/slok/go-http-metrics/middleware"
@@ -21,11 +20,6 @@ type Config[T http.Handler] struct {
 	Label common.Label
 	Host  common.Host
 	Port  common.Port
-}
-
-func (c *Config[T]) BuildConfig() (builder.Builder, error) {
-	cfg := Config[T]{}
-	return &cfg, nil
 }
 
 func (cfg *Config[T]) Build() (any, error) {
