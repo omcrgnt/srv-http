@@ -88,6 +88,12 @@ func TestConfig_Build_integration(t *testing.T) {
 	if !strings.Contains(metricsStr, "http_request_duration_seconds_count") {
 		t.Error("metrics: missing observation count after /ping")
 	}
+	if strings.Contains(metricsStr, `service="value:\"`) {
+		t.Error("metrics: service label must use Label.Value, not proto String()")
+	}
+	if !strings.Contains(metricsStr, `service="test_srv"`) {
+		t.Errorf("metrics: want service=test_srv in body, got excerpt: %.200s", metricsStr)
+	}
 
 	spans := spanExporter.GetSpans()
 	if len(spans) == 0 {
