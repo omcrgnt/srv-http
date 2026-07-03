@@ -48,7 +48,7 @@ func TestConfig_Build_integration(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	server := built.(*srv[*chi.Mux])
+	server := built.(*Server[*chi.Mux])
 	server.Inject([]any{r, recorder})
 
 	if err := server.Start(t.Context()); err != nil {
@@ -118,7 +118,7 @@ func TestInject(t *testing.T) {
 	mux := chi.NewRouter()
 	rec := promrecorder.NewRecorder(promrecorder.Config{Registry: prometheus.NewRegistry()})
 
-	s := &srv[*chi.Mux]{}
+	s := &Server[*chi.Mux]{}
 	deps := s.Deps()
 
 	if got, want := reflect.TypeOf(deps[0]), reflect.TypeOf((*chi.Mux)(nil)); got != want {
@@ -148,9 +148,9 @@ func TestStart_cancelledContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	s := &srv[*chi.Mux]{
+	s := &Server[*chi.Mux]{
 		listener: ln,
-		initFn:   func(context.Context, *srv[*chi.Mux]) {},
+		initFn:   func(context.Context, *Server[*chi.Mux]) {},
 	}
 
 	err = s.Start(ctx)
@@ -168,9 +168,9 @@ func TestHealthCheck_serveError(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	s := &srv[*chi.Mux]{
+	s := &Server[*chi.Mux]{
 		listener: ln,
-		initFn:   func(context.Context, *srv[*chi.Mux]) {},
+		initFn:   func(context.Context, *Server[*chi.Mux]) {},
 		Server: http.Server{
 			Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(http.StatusOK)
@@ -219,7 +219,7 @@ func TestClose_cancelledContext(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	server := built.(*srv[*chi.Mux])
+	server := built.(*Server[*chi.Mux])
 	server.Inject([]any{r, recorder})
 
 	if err := server.Start(context.Background()); err != nil {
@@ -247,6 +247,17 @@ func TestClose_cancelledContext(t *testing.T) {
 
 	if err := server.Close(ctx); !errors.Is(err, context.Canceled) {
 		t.Fatalf("Close with cancelled context: got %v, want context.Canceled", err)
+	}
+}
+
+func TestServer_BuildConfig(t *testing.T) {
+	var slot Server[*chi.Mux]
+	mat, err := slot.BuildConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := mat.(*Config[*chi.Mux]); !ok {
+		t.Fatalf("BuildConfig: got %T, want *Config[*chi.Mux]", mat)
 	}
 }
 
