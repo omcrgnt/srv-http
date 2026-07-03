@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/omcrgnt/res/unique"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/slok/go-http-metrics/metrics"
 	promrecorder "github.com/slok/go-http-metrics/metrics/prometheus"
@@ -50,3 +51,7 @@ var (
 	_ MetricsContributor = (*HTTPMetrics)(nil)
 	_ metrics.Recorder   = (*HTTPMetrics)(nil)
 )
+
+func init() {
+	unique.MustAddFixed(&HTTPMetrics{})
+}
