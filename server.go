@@ -8,7 +8,9 @@ import (
 	"net"
 	"net/http"
 
+	"github.com/omcrgnt/app"
 	common "github.com/omcrgnt/proto/gen/go/common/v1"
+
 	"github.com/slok/go-http-metrics/metrics"
 	"github.com/slok/go-http-metrics/middleware"
 	"github.com/slok/go-http-metrics/middleware/std"
@@ -16,6 +18,7 @@ import (
 	"go.uber.org/atomic"
 )
 
+// Config is the HTTP server spec (Label, Host, Port); ecfg fills before Build.
 type Config[T http.Handler] struct {
 	Label common.Label
 	Host  common.Host
@@ -27,19 +30,18 @@ func (cfg *Config[T]) Build() (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &srv[T]{
-		initFn: func(ctx context.Context, t *srv[T]) {
+	label := cfg.Label.GetValue()
+	return &Server[T]{
+		initFn: func(ctx context.Context, t *Server[T]) {
 			mdlw := middleware.New(middleware.Config{
 				Recorder: t.recorder,
-				Service:  cfg.Label.GetValue(),
+				Service:  label,
 			})
 			t.Handler = std.Handler("", mdlw, t.Handler)
-
-			t.Handler = otelhttp.NewHandler(t.Handler, cfg.Label.GetValue())
-
+			t.Handler = otelhttp.NewHandler(t.Handler, label)
 			t.BaseContext = func(net.Listener) context.Context {
-				logger := slog.Default().With("srv", cfg.Label.GetValue()) // TODO mcrgnt: make properly logger
-				return context.WithValue(ctx, "srvhttp", logger)         // TODO mcrgnt: make properly logger
+				logger := slog.Default().With("srv", label)      // TODO mcrgnt: make properly logger
+				return context.WithValue(ctx, "srvhttp", logger) // TODO mcrgnt: make properly logger
 			}
 		},
 		Server:   http.Server{},
@@ -47,17 +49,22 @@ func (cfg *Config[T]) Build() (any, error) {
 	}, nil
 }
 
-type srv[T http.Handler] struct {
-	initFn func(context.Context, *srv[T])
+// Server is a catalog slot for an HTTP server bound to handler type T.
+// Zero value implements app.Configurable via BuildConfig; materialized *Server[T] is the runtime resource.
+type Server[T http.Handler] struct {
+	initFn func(context.Context, *Server[T])
 	http.Server
 	listener net.Listener
 	err      atomic.Error
 
-	handler  T
 	recorder metrics.Recorder
 }
 
-func (r *srv[T]) Deps() []any {
+func (Server[T]) BuildConfig() (app.Materializer, error) {
+	return &Config[T]{}, nil
+}
+
+func (r *Server[T]) Deps() []any {
 	var t T
 	return []any{
 		t,
@@ -65,7 +72,7 @@ func (r *srv[T]) Deps() []any {
 	}
 }
 
-func (r *srv[T]) Inject(args []any) {
+func (r *Server[T]) Inject(args []any) {
 	for _, arg := range args {
 		switch v := arg.(type) {
 		case T:
@@ -76,7 +83,7 @@ func (r *srv[T]) Inject(args []any) {
 	}
 }
 
-func (t *srv[T]) Start(ctx context.Context) error {
+func (t *Server[T]) Start(ctx context.Context) error {
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
@@ -94,7 +101,7 @@ func (t *srv[T]) Start(ctx context.Context) error {
 	}
 }
 
-func (t *srv[T]) Close(ctx context.Context) error {
+func (t *Server[T]) Close(ctx context.Context) error {
 	if err := t.Shutdown(ctx); err != nil {
 		if !errors.Is(err, http.ErrServerClosed) {
 			return err
@@ -103,6 +110,6 @@ func (t *srv[T]) Close(ctx context.Context) error {
 	return nil
 }
 
-func (t *srv[T]) HealthCheck(_ context.Context) error {
+func (t *Server[T]) HealthCheck(_ context.Context) error {
 	return t.err.Load()
 }
