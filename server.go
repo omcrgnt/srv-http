@@ -49,8 +49,9 @@ func (cfg *Config[T]) Build() (any, error) {
 	}, nil
 }
 
-// Server is a catalog slot for an HTTP server bound to handler type T.
-// Zero value implements app.Configurable via BuildConfig; materialized *Server[T] is the runtime resource.
+// Server is the HTTP server resource bound to handler type T.
+// Catalog field: *Server[T] (Configurable); materialized *Server[T] is the runtime instance after [Config].Build.
+// Runtime methods: Start, Close, HealthCheck, ProbeReady.
 type Server[T http.Handler] struct {
 	initFn func(context.Context, *Server[T])
 	http.Server
@@ -60,7 +61,7 @@ type Server[T http.Handler] struct {
 	recorder metrics.Recorder
 }
 
-func (Server[T]) BuildConfig() (app.Materializer, error) {
+func (*Server[T]) BuildConfig() (app.Materializer, error) {
 	return &Config[T]{}, nil
 }
 
@@ -112,4 +113,10 @@ func (t *Server[T]) Close(ctx context.Context) error {
 
 func (t *Server[T]) HealthCheck(_ context.Context) error {
 	return t.err.Load()
+}
+
+// ProbeReady reports traffic readiness (SDI duck typing; no ops import).
+// v1: same as HealthCheck — non-nil if Serve failed after Start.
+func (t *Server[T]) ProbeReady(ctx context.Context) error {
+	return t.HealthCheck(ctx)
 }
