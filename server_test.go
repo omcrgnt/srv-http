@@ -192,6 +192,70 @@ func TestHealthCheck_serveError(t *testing.T) {
 	t.Fatal("HealthCheck: expected serve error, got nil")
 }
 
+func TestProbeReady_serveError(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ln.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	s := &Server[*chi.Mux]{
+		listener: ln,
+		initFn:   func(context.Context, *Server[*chi.Mux]) {},
+		Server: http.Server{
+			Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusOK)
+			}),
+		},
+	}
+
+	if err := s.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if err := s.ProbeReady(context.Background()); err != nil {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("ProbeReady: expected serve error, got nil")
+}
+
+func TestProbeReady_matchesHealthCheck(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+
+	s := &Server[*chi.Mux]{
+		listener: ln,
+		initFn:   func(context.Context, *Server[*chi.Mux]) {},
+		Server: http.Server{
+			Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusOK)
+			}),
+		},
+	}
+
+	ctx := context.Background()
+	if err := s.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s.Close(context.Background()) })
+
+	if err := s.ProbeReady(ctx); err != nil {
+		t.Fatalf("ProbeReady after Start: %v", err)
+	}
+	if err := s.HealthCheck(ctx); err != nil {
+		t.Fatalf("HealthCheck after Start: %v", err)
+	}
+}
+
 func TestClose_cancelledContext(t *testing.T) {
 	registry := prometheus.NewRegistry()
 	recorder := promrecorder.NewRecorder(promrecorder.Config{Registry: registry})
@@ -251,7 +315,7 @@ func TestClose_cancelledContext(t *testing.T) {
 }
 
 func TestServer_BuildConfig(t *testing.T) {
-	var slot Server[*chi.Mux]
+	slot := &Server[*chi.Mux]{}
 	mat, err := slot.BuildConfig()
 	if err != nil {
 		t.Fatal(err)
