@@ -51,11 +51,12 @@ func TestConfig_Build_integration(t *testing.T) {
 	server := built.(*Server[*chi.Mux])
 	server.Inject([]any{r, recorder})
 
-	if err := server.Start(t.Context()); err != nil {
+	stop, err := server.Start(t.Context())
+	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		_ = server.Close(context.Background())
+		_ = stop(context.Background())
 	})
 
 	addr := server.listener.Addr().String()
@@ -105,7 +106,7 @@ func TestConfig_Build_integration(t *testing.T) {
 		}
 	}
 
-	if err := server.Close(t.Context()); err != nil {
+	if err := stop(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -127,14 +128,124 @@ func TestInject(t *testing.T) {
 	if got, want := reflect.TypeOf(deps[1]), reflect.TypeOf((*metrics.Recorder)(nil)); got != want {
 		t.Errorf("Deps()[1] type = %v, want %v", got, want)
 	}
+	if got, want := reflect.TypeOf(deps[2]), reflect.TypeOf((*gate)(nil)); got != want {
+		t.Errorf("Deps()[2] type = %v, want %v", got, want)
+	}
 
-	s.Inject([]any{mux, rec})
+	fg := &fakeGate{ready: true}
+	s.Inject([]any{mux, rec, gate(fg)})
 
 	if s.Handler != mux {
 		t.Error("Inject: Handler not set")
 	}
 	if s.recorder != rec {
 		t.Error("Inject: recorder not set")
+	}
+	if s.gate != fg {
+		t.Error("Inject: gate not set")
+	}
+}
+
+type fakeGate struct{ ready bool }
+
+func (g *fakeGate) Ready() bool { return g.ready }
+
+func TestConfig_Build_gate(t *testing.T) {
+	table := []struct {
+		name       string
+		gate       *fakeGate
+		wantStatus int
+	}{
+		{name: "no gate wired", gate: nil, wantStatus: http.StatusOK},
+		{name: "gate not ready", gate: &fakeGate{ready: false}, wantStatus: http.StatusServiceUnavailable},
+		{name: "gate ready", gate: &fakeGate{ready: true}, wantStatus: http.StatusOK},
+	}
+
+	for _, tc := range table {
+		t.Run(tc.name, func(t *testing.T) {
+			r := chi.NewRouter()
+			r.Get("/ping", func(w http.ResponseWriter, req *http.Request) {
+				w.Write([]byte("pong"))
+			})
+
+			cfg := Config[*chi.Mux]{
+				Label: common.Label{Value: "test_srv"},
+				Host:  common.Host{Value: "127.0.0.1"},
+				Port:  common.Port{Value: 0},
+			}
+			built, err := cfg.Build()
+			if err != nil {
+				t.Fatal(err)
+			}
+			server := built.(*Server[*chi.Mux])
+
+			deps := []any{r, promrecorder.NewRecorder(promrecorder.Config{Registry: prometheus.NewRegistry()})}
+			if tc.gate != nil {
+				deps = append(deps, gate(tc.gate))
+			}
+			server.Inject(deps)
+
+			stop, err := server.Start(t.Context())
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = stop(context.Background()) })
+
+			addr := server.listener.Addr().String()
+			time.Sleep(50 * time.Millisecond)
+
+			resp, err := (&http.Client{}).Get(fmt.Sprintf("http://%s/ping", addr))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer resp.Body.Close()
+			if resp.StatusCode != tc.wantStatus {
+				t.Errorf("status = %d, want %d", resp.StatusCode, tc.wantStatus)
+			}
+		})
+	}
+}
+
+func TestConfig_Build_gate_disabled(t *testing.T) {
+	// A gate-not-ready would normally 503 (see TestConfig_Build_gate) — this
+	// proves DisableGate suppresses that check even with a gate injected,
+	// the case ops needs its own readiness endpoint to never be blocked by.
+	r := chi.NewRouter()
+	r.Get("/ping", func(w http.ResponseWriter, req *http.Request) {
+		w.Write([]byte("pong"))
+	})
+
+	cfg := Config[*chi.Mux]{
+		Label: common.Label{Value: "test_srv"},
+		Host:  common.Host{Value: "127.0.0.1"},
+		Port:  common.Port{Value: 0},
+	}
+	built, err := cfg.Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := built.(*Server[*chi.Mux])
+	server.DisableGate()
+
+	rec := promrecorder.NewRecorder(promrecorder.Config{Registry: prometheus.NewRegistry()})
+	server.Inject([]any{r, rec, gate(&fakeGate{ready: false})})
+
+	stop, err := server.Start(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = stop(context.Background()) })
+
+	addr := server.listener.Addr().String()
+	time.Sleep(50 * time.Millisecond)
+
+	resp, err := (&http.Client{}).Get(fmt.Sprintf("http://%s/ping", addr))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("status = %d, want %d (DisableGate should suppress the gate check)", resp.StatusCode, http.StatusOK)
 	}
 }
 
@@ -153,9 +264,12 @@ func TestStart_cancelledContext(t *testing.T) {
 		initFn:   func(context.Context, *Server[*chi.Mux]) {},
 	}
 
-	err = s.Start(ctx)
+	cleanup, err := s.Start(ctx)
 	if !errors.Is(err, context.Canceled) {
 		t.Errorf("Start: got %v, want context.Canceled", err)
+	}
+	if cleanup != nil {
+		t.Error("Start: expected nil cleanup on failure")
 	}
 }
 
@@ -178,7 +292,7 @@ func TestHealthCheck_serveError(t *testing.T) {
 		},
 	}
 
-	if err := s.Start(context.Background()); err != nil {
+	if _, err := s.Start(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -211,7 +325,7 @@ func TestProbeReady_serveError(t *testing.T) {
 		},
 	}
 
-	if err := s.Start(context.Background()); err != nil {
+	if _, err := s.Start(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -243,10 +357,11 @@ func TestProbeReady_matchesHealthCheck(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	if err := s.Start(ctx); err != nil {
+	stop, err := s.Start(ctx)
+	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = s.Close(context.Background()) })
+	t.Cleanup(func() { _ = stop(context.Background()) })
 
 	if err := s.ProbeReady(ctx); err != nil {
 		t.Fatalf("ProbeReady after Start: %v", err)
@@ -256,7 +371,7 @@ func TestProbeReady_matchesHealthCheck(t *testing.T) {
 	}
 }
 
-func TestClose_cancelledContext(t *testing.T) {
+func TestStop_cancelledContext(t *testing.T) {
 	registry := prometheus.NewRegistry()
 	recorder := promrecorder.NewRecorder(promrecorder.Config{Registry: registry})
 
@@ -286,12 +401,13 @@ func TestClose_cancelledContext(t *testing.T) {
 	server := built.(*Server[*chi.Mux])
 	server.Inject([]any{r, recorder})
 
-	if err := server.Start(context.Background()); err != nil {
+	stop, err := server.Start(context.Background())
+	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
 		close(release)
-		_ = server.Close(context.Background())
+		_ = stop(context.Background())
 	})
 
 	addr := server.listener.Addr().String()
@@ -309,8 +425,8 @@ func TestClose_cancelledContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	if err := server.Close(ctx); !errors.Is(err, context.Canceled) {
-		t.Fatalf("Close with cancelled context: got %v, want context.Canceled", err)
+	if err := stop(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("stop with cancelled context: got %v, want context.Canceled", err)
 	}
 }
 

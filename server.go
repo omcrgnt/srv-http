@@ -33,11 +33,15 @@ func (cfg *Config[T]) Build() (any, error) {
 	label := cfg.Label.GetValue()
 	return &Server[T]{
 		initFn: func(ctx context.Context, t *Server[T]) {
+			handler := t.Handler
+			if t.gate != nil && !t.gateDisabled {
+				handler = gateHandler(t.gate, handler)
+			}
 			mdlw := middleware.New(middleware.Config{
 				Recorder: t.recorder,
 				Service:  label,
 			})
-			t.Handler = std.Handler("", mdlw, t.Handler)
+			t.Handler = std.Handler("", mdlw, handler)
 			t.Handler = otelhttp.NewHandler(t.Handler, label)
 			t.BaseContext = func(net.Listener) context.Context {
 				logger := slog.Default().With("srv", label)      // TODO mcrgnt: make properly logger
@@ -49,27 +53,51 @@ func (cfg *Config[T]) Build() (any, error) {
 	}, nil
 }
 
+// gate reports whether traffic should be let through — no runner import;
+// duck-typed against runner.Gate's Ready() bool.
+type gate interface{ Ready() bool }
+
+// gateHandler answers 503 instead of calling next while g reports not ready.
+func gateHandler(g gate, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !g.Ready() {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 // Server is the HTTP server resource bound to handler type T.
 // Catalog field: *Server[T] (Configurable); materialized *Server[T] is the runtime instance after [Config].Build.
-// Runtime methods: Start, Close, HealthCheck, ProbeReady.
+// Runtime methods: Start (returns a cleanup that stops the server), HealthCheck, ProbeReady.
 type Server[T http.Handler] struct {
 	initFn func(context.Context, *Server[T])
 	http.Server
 	listener net.Listener
 	err      atomic.Error
 
-	recorder metrics.Recorder
+	recorder     metrics.Recorder
+	gate         gate
+	gateDisabled bool
 }
 
 func (*Server[T]) BuildConfig() (app.Materializer, error) {
 	return &Config[T]{}, nil
 }
 
+// DisableGate permanently turns off gate-checking for this instance — for
+// servers that must never be traffic-gated (e.g. ops's own readiness
+// endpoint, which would otherwise mask its own status behind a blanket 503,
+// and could false-fail a liveness check sharing the same listener).
+func (r *Server[T]) DisableGate() { r.gateDisabled = true }
+
 func (r *Server[T]) Deps() []any {
 	var t T
 	return []any{
 		t,
 		(*metrics.Recorder)(nil),
+		(*gate)(nil),
 	}
 }
 
@@ -80,14 +108,16 @@ func (r *Server[T]) Inject(args []any) {
 			r.Handler = v
 		case metrics.Recorder:
 			r.recorder = v
+		case gate:
+			r.gate = v
 		}
 	}
 }
 
-func (t *Server[T]) Start(ctx context.Context) error {
+func (t *Server[T]) Start(ctx context.Context) (func(context.Context) error, error) {
 	select {
 	case <-ctx.Done():
-		return ctx.Err()
+		return nil, ctx.Err()
 	default:
 		t.initFn(ctx, t)
 
@@ -98,11 +128,11 @@ func (t *Server[T]) Start(ctx context.Context) error {
 				}
 			}
 		}()
-		return nil
+		return t.stop, nil
 	}
 }
 
-func (t *Server[T]) Close(ctx context.Context) error {
+func (t *Server[T]) stop(ctx context.Context) error {
 	if err := t.Shutdown(ctx); err != nil {
 		if !errors.Is(err, http.ErrServerClosed) {
 			return err
