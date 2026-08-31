@@ -271,6 +271,87 @@ func TestStart_cancelledContext(t *testing.T) {
 	if cleanup != nil {
 		t.Error("Start: expected nil cleanup on failure")
 	}
+	// Start returns no cleanup on this path, so the listener Build already
+	// opened would otherwise never be closed by anything — Accept must fail
+	// on a closed listener. Bounded deadline instead of a bare blocking
+	// Accept: if this regresses to leaking the listener again, Accept would
+	// otherwise block forever waiting for a connection that never comes,
+	// hanging the whole test run instead of failing it.
+	_ = ln.(*net.TCPListener).SetDeadline(time.Now().Add(2 * time.Second))
+	if _, err := ln.Accept(); err == nil {
+		t.Error("Start: listener was not closed on the already-cancelled-ctx path — fd leak")
+	} else if !strings.Contains(err.Error(), "use of closed network connection") {
+		t.Errorf("Start: Accept error = %v, want \"use of closed network connection\" (got a deadline timeout instead — listener was never closed)", err)
+	}
+}
+
+// TestClose_isGraceful proves *Server[T]'s own Close shadows the http.Server
+// it embeds: without that shadow, a bare server.Close() call promotes to
+// http.Server.Close (hard reset, drops in-flight connections instantly)
+// instead of the graceful Shutdown-based stop Start's cleanup uses. A hard
+// close would make this test observe closeDone fire immediately, before
+// release is ever closed.
+func TestClose_isGraceful(t *testing.T) {
+	registry := prometheus.NewRegistry()
+	recorder := promrecorder.NewRecorder(promrecorder.Config{Registry: registry})
+
+	hold := make(chan struct{})
+	release := make(chan struct{})
+
+	r := chi.NewRouter()
+	r.Get("/hold", func(w http.ResponseWriter, req *http.Request) {
+		close(hold)
+		select {
+		case <-release:
+		case <-req.Context().Done():
+		}
+	})
+
+	cfg := Config[*chi.Mux]{
+		Label: common.Label{Value: "test_srv"},
+		Host:  common.Host{Value: "127.0.0.1"},
+		Port:  common.Port{Value: 0},
+	}
+
+	built, err := cfg.Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	server := built.(*Server[*chi.Mux])
+	server.Inject([]any{r, recorder})
+
+	if _, err := server.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	addr := server.listener.Addr().String()
+	go func() {
+		client := &http.Client{}
+		resp, err := client.Get(fmt.Sprintf("http://%s/hold", addr))
+		if err == nil {
+			io.Copy(io.Discard, resp.Body)
+			resp.Body.Close()
+		}
+	}()
+
+	<-hold
+
+	closeDone := make(chan error, 1)
+	go func() { closeDone <- server.Close() }()
+
+	select {
+	case <-closeDone:
+		t.Fatal("Close() returned before the in-flight request finished — got the embedded http.Server's hard Close, not the graceful stop")
+	case <-time.After(100 * time.Millisecond):
+		// still blocked waiting for the in-flight request, as expected of a
+		// graceful shutdown.
+	}
+
+	close(release)
+	if err := <-closeDone; err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestHealthCheck_serveError(t *testing.T) {
