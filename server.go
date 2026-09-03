@@ -97,6 +97,11 @@ func (*Server[T]) BuildConfig() (app.Materializer, error) {
 // servers that must never be traffic-gated (e.g. ops's own readiness
 // endpoint, which would otherwise mask its own status behind a blanket 503,
 // and could false-fail a liveness check sharing the same listener).
+//
+// Must be called before Start, synchronously by the same caller that wires
+// this Server: initFn reads t.gate/t.gateDisabled once, while building the
+// request pipeline, and never again — a call after Start has already run
+// is a silent no-op.
 func (t *Server[T]) DisableGate() { t.gateDisabled = true }
 
 func (t *Server[T]) Deps() []any {
@@ -164,8 +169,17 @@ func (t *Server[T]) HealthCheck(_ context.Context) error {
 	return t.err.Load()
 }
 
-// ProbeReady reports traffic readiness (SDI duck typing; no ops import).
-// v1: same as HealthCheck — non-nil if Serve failed after Start.
+// ProbeReady reports traffic readiness (SDI duck typing; no ops import):
+// non-nil if Serve failed after Start (same as HealthCheck), or if a gate
+// is wired, enabled, and not yet open — a caller relying only on
+// HealthCheck would see this Server as ready while every real request is
+// still answered 503 by the gate handler.
 func (t *Server[T]) ProbeReady(ctx context.Context) error {
-	return t.HealthCheck(ctx)
+	if err := t.HealthCheck(ctx); err != nil {
+		return err
+	}
+	if t.gate != nil && !t.gateDisabled && !t.gate.Ready() {
+		return errors.New("srvhttp: gate not ready")
+	}
+	return nil
 }

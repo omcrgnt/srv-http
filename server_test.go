@@ -452,6 +452,73 @@ func TestProbeReady_matchesHealthCheck(t *testing.T) {
 	}
 }
 
+// TestProbeReady_gateNotReady: HealthCheck alone (t.err) can't see this —
+// Serve hasn't failed, only the gate hasn't opened yet. Without ProbeReady
+// also consulting the gate, a k8s readiness probe would mark this pod Ready
+// while every real request is still answered 503 by the gate handler.
+func TestProbeReady_gateNotReady(t *testing.T) {
+	r := chi.NewRouter()
+	rec := promrecorder.NewRecorder(promrecorder.Config{Registry: prometheus.NewRegistry()})
+
+	cfg := Config[*chi.Mux]{
+		Label: common.Label{Value: "test_srv"},
+		Host:  common.Host{Value: "127.0.0.1"},
+		Port:  common.Port{Value: 0},
+	}
+	built, err := cfg.Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := built.(*Server[*chi.Mux])
+	server.Inject([]any{r, rec, gate(&fakeGate{ready: false})})
+
+	ctx := context.Background()
+	stop, err := server.Start(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = stop(context.Background()) })
+
+	if err := server.ProbeReady(ctx); err == nil {
+		t.Fatal("ProbeReady: expected error while gate is not ready, got nil")
+	}
+	if err := server.HealthCheck(ctx); err != nil {
+		t.Fatalf("HealthCheck: got %v, want nil (gate readiness is ProbeReady's concern, not HealthCheck's)", err)
+	}
+}
+
+// TestProbeReady_gateDisabled_ignoresNotReadyGate mirrors
+// TestConfig_Build_gate_disabled at the ProbeReady level: DisableGate must
+// suppress the gate check here too, not just in the request handler.
+func TestProbeReady_gateDisabled_ignoresNotReadyGate(t *testing.T) {
+	r := chi.NewRouter()
+	rec := promrecorder.NewRecorder(promrecorder.Config{Registry: prometheus.NewRegistry()})
+
+	cfg := Config[*chi.Mux]{
+		Label: common.Label{Value: "test_srv"},
+		Host:  common.Host{Value: "127.0.0.1"},
+		Port:  common.Port{Value: 0},
+	}
+	built, err := cfg.Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := built.(*Server[*chi.Mux])
+	server.DisableGate()
+	server.Inject([]any{r, rec, gate(&fakeGate{ready: false})})
+
+	ctx := context.Background()
+	stop, err := server.Start(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = stop(context.Background()) })
+
+	if err := server.ProbeReady(ctx); err != nil {
+		t.Fatalf("ProbeReady: got %v, want nil (DisableGate should suppress the gate check)", err)
+	}
+}
+
 func TestStop_cancelledContext(t *testing.T) {
 	registry := prometheus.NewRegistry()
 	recorder := promrecorder.NewRecorder(promrecorder.Config{Registry: registry})
