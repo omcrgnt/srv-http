@@ -23,6 +23,10 @@ type Config[T http.Handler] struct {
 	Label common.Label
 	Host  common.Host
 	Port  common.Port
+
+	// extraMiddleware carries New's options through to Build — unexported,
+	// so ecfg's reflection-based walker can't set it and leaves it alone.
+	extraMiddleware []func(http.Handler) http.Handler
 }
 
 // loggerCtxKey is an unexported type, not a string: context.WithValue's own
@@ -36,9 +40,16 @@ func (cfg *Config[T]) Build() (any, error) {
 		return nil, err
 	}
 	label := cfg.Label.GetValue()
+	extraMiddleware := cfg.extraMiddleware
 	return &Server[T]{
 		initFn: func(ctx context.Context, t *Server[T]) {
 			handler := t.Handler
+			// Extra middleware (e.g. gctxhttp.Middleware) runs closest to the
+			// real handler, inside the gate — no point doing extra work for a
+			// request the gate is about to reject with 503 anyway.
+			for i := len(t.extraMiddleware) - 1; i >= 0; i-- {
+				handler = t.extraMiddleware[i](handler)
+			}
 			if t.gate != nil && !t.gateDisabled {
 				handler = gateHandler(t.gate, handler)
 			}
@@ -53,8 +64,9 @@ func (cfg *Config[T]) Build() (any, error) {
 				return context.WithValue(ctx, loggerCtxKey{}, logger)
 			}
 		},
-		Server:   http.Server{},
-		listener: listener,
+		Server:          http.Server{},
+		listener:        listener,
+		extraMiddleware: extraMiddleware,
 	}, nil
 }
 
@@ -87,10 +99,41 @@ type Server[T http.Handler] struct {
 	recorder     metrics.Recorder
 	gate         gate
 	gateDisabled bool
+
+	// extraMiddleware is set via New/WithMiddleware, carried through
+	// BuildConfig -> Config -> Build — see client-grpc's Client.New doc
+	// comment for why the catalog field must be constructed non-nil for
+	// this to survive at all.
+	extraMiddleware []func(http.Handler) http.Handler
 }
 
-func (*Server[T]) BuildConfig() (app.Materializer, error) {
-	return &Config[T]{}, nil
+// Option configures a Server at construction time, for values ecfg can't
+// fill (e.g. middleware functions) — see New.
+type Option[T http.Handler] func(*Server[T])
+
+// WithMiddleware appends middleware run in addition to (not instead of)
+// the metrics/gate wrapping this package always installs, closest to the
+// real handler — see Config.Build's initFn for exact placement.
+func WithMiddleware[T http.Handler](mw ...func(http.Handler) http.Handler) Option[T] {
+	return func(s *Server[T]) { s.extraMiddleware = append(s.extraMiddleware, mw...) }
+}
+
+// New constructs a Server[T] with the given options applied. The catalog
+// field holding it must be assigned this (non-nil) in the app's resources
+// literal — left nil (the zero-value default), these options are lost when
+// Build constructs a fresh instance. See client-grpc's Client.New.
+func New[T http.Handler](opts ...Option[T]) *Server[T] {
+	s := &Server[T]{}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
+}
+
+// BuildConfig returns the config spec for materialize, carrying over
+// whatever options New was called with.
+func (t *Server[T]) BuildConfig() (app.Materializer, error) {
+	return &Config[T]{extraMiddleware: t.extraMiddleware}, nil
 }
 
 // DisableGate permanently turns off gate-checking for this instance — for
